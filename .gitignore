@@ -3,3 +3,4 @@
 *.tfstate.backup
 *.hcl
 .DS_Store
+env_to_set
