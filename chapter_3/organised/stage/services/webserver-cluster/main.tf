@@ -2,31 +2,32 @@ provider "aws" {
 	region = "us-east-1"
 }
 
-resource "aws_launch_configuration" "example" {
+
+resource "aws_launch_template" "launchtemplate" {
 	image_id = "ami-002e81a9a522f1f19"
 	instance_type = "t2.micro"
-    security_groups = [aws_security_group.instance.id]
+    vpc_security_group_ids = [aws_security_group.allow_all.id]
 
-	user_data = <<-EOF
-			#!/bin/bash
-			echo "Hello, World" > index.html
-			nohup busybox httpd -f -p ${var.server_port} &
-			EOF
-
-    lifecycle {
-        create_before_destroy = true
-    }
+    user_data = base64encode(templatefile("user-data.sh", {
+        server_port = var.server_port
+        db_address = data.terraform_remote_state.db.outputs.address
+        db_port = data.terraform_remote_state.db.outputs.port
+    }))
 }
 
+
 resource "aws_autoscaling_group" "example" {
-    launch_configuration = aws_launch_configuration.example.name
-    vpc_zone_identifier  = data.aws_subnets.default.ids
-
-    target_group_arns = [aws_lb_target_group.asg.arn]
-    health_check_type = "ELB"
-
     min_size = 2
     max_size = 10
+
+    launch_template {
+        id = aws_launch_template.launchtemplate.id
+        version = "$Latest"
+    }
+    vpc_zone_identifier  = data.aws_subnets.default.ids
+
+    target_group_arns = [aws_lb_target_group.target_group.arn]
+    health_check_type = "ELB"
 
     tag {
         key = "Name"
@@ -35,7 +36,7 @@ resource "aws_autoscaling_group" "example" {
     }
 }
 
-resource "aws_security_group" "instance" {
+resource "aws_security_group" "allow_all" {
     name = "123"
 
     ingress {
@@ -46,15 +47,14 @@ resource "aws_security_group" "instance" {
     }
 }
 
-resource "aws_lb" "example" {
-    name = "terraform-asg-example"
+resource "aws_lb" "load_balancer" {
     load_balancer_type = "application"
     subnets = data.aws_subnets.default.ids
     security_groups = [aws_security_group.alb.id]
 }
 
-resource "aws_lb_listener" "http" {
-    load_balancer_arn = aws_lb.example.arn
+resource "aws_lb_listener" "listener" {
+    load_balancer_arn = aws_lb.load_balancer.arn
     port = 80
     protocol = "HTTP"
 
@@ -69,7 +69,7 @@ resource "aws_lb_listener" "http" {
     }
 }
 
-resource "aws_lb_target_group" "asg" {
+resource "aws_lb_target_group" "target_group" {
 
     name = "terraform-asg-example"
 
@@ -110,7 +110,7 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_lb_listener_rule" "asg" {
-    listener_arn = aws_lb_listener.http.arn
+    listener_arn = aws_lb_listener.listener.arn
     priority     = 100
 
     condition {
@@ -121,7 +121,7 @@ resource "aws_lb_listener_rule" "asg" {
 
     action {
         type             = "forward"
-        target_group_arn = aws_lb_target_group.asg.arn
+        target_group_arn = aws_lb_target_group.target_group.arn
     }
 }
 
@@ -133,5 +133,15 @@ data "aws_subnets" "default" {
     filter {
         name   = "vpc-id"
         values = [data.aws_vpc.default.id]
+    }
+}
+
+data "terraform_remote_state" "db" {
+    backend = "s3"
+
+    config = {
+        bucket = var.bucket_name
+        key = var.db_remote_state_key
+        region = "us-east-1"
     }
 }

@@ -17,7 +17,7 @@ resource "aws_db_instance" "example" {
 
 terraform {
     backend "s3" {
-        bucket = "bucket-name9822222"
+        bucket = "bucket-name98321321"
         key = "stage/data-stores/mysql/terraform.tfstate"
         region = "us-east-1"
 
